@@ -208,7 +208,14 @@
 
         <div class="panel" id="panel-settings">
             <div class="page-title">관리자 설정</div>
-            <div class="page-sub">관리자 계정 비밀번호를 변경합니다.</div>
+            <div class="page-sub">GitHub 연동 및 관리자 비밀번호를 관리합니다.</div>
+            <div class="card" style="max-width:520px;margin-bottom:1.5rem;"><h2>GitHub 연동 설정</h2>
+                <p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">가입자 생성 시 메인 사이트에 자동 반영됩니다. GitHub Personal Access Token(repo 권한)을 입력하세요.</p>
+                <div class="alert ok" id="ghOk"></div>
+                <div class="alert err" id="ghErr"></div>
+                <div class="pw-group"><label>GitHub 토큰</label><input type="password" id="ghToken" placeholder="ghp_..." autocomplete="off"></div>
+                <button type="button" class="btn-create" onclick="saveGhToken()">저장</button>
+            </div>
             <div class="card" style="max-width:460px;"><h2>비밀번호 변경</h2>
                 <div class="alert err" id="pwErr"></div>
                 <div class="alert ok" id="pwOk"></div>
@@ -227,19 +234,46 @@
 
 <script>
 const SALT='ephseed_secure_2026', ADMIN_ID='admin';
+const GH_OWNER='ephraim88106', GH_REPO='EPHSEED', GH_FILE='subscribers.json';
+const RAW_URL=`https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_FILE}`;
+const API_URL=`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_FILE}`;
+
 async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s+SALT));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
 function initAdmin(){if(!localStorage.getItem('ephseed_admin_hash'))sha256('12123ska').then(h=>localStorage.setItem('ephseed_admin_hash',h));}
-const DEFAULT_SUBSCRIBERS=[
-    {userId:'EP-374',loginId:'mango7',displayName:'회원1',passwordHash:'1a4e7db2ff7842c5eb00576f961dc47aafa21e5e0f3b120f855b92d0985c6f81',storeName:'1호점',storeType:'스터디카페',plan:'standard',createdAt:'2026-06-30T00:00:00.000Z',active:true},
-    {userId:'EP-851',loginId:'skyblue3',displayName:'회원2',passwordHash:'9d39db0466a2091f88c5f0ad9cd3d8341bdebd808c8ccbe0342889038fc8b241',storeName:'2호점',storeType:'스터디카페',plan:'standard',createdAt:'2026-06-30T00:00:00.000Z',active:true},
-    {userId:'EP-629',loginId:'nova52',displayName:'회원3',passwordHash:'bd452368394d1d9f3e58fbcd1526624ac58cd42ca191ba7427ca1c97ec119504',storeName:'3호점',storeType:'스터디카페',plan:'standard',createdAt:'2026-06-30T00:00:00.000Z',active:true},
-    {userId:'EP-213',loginId:'tide91',displayName:'회원4',passwordHash:'ced71c79e536862963c9d02e2b6797b9f23a0993c8bb4be6f1a50f8dd4d75c47',storeName:'4호점',storeType:'스터디카페',plan:'standard',createdAt:'2026-06-30T00:00:00.000Z',active:true},{userId:'EP-413',loginId:'tiger87',displayName:'회원5',passwordHash:'2712e2d18d18cf5d2a924655de2c93d89da76d3fe00a6ea31a5f795231a5c507',storeName:'5호점',storeType:'스터디카페',plan:'standard',createdAt:'2026-06-30T00:00:00.000Z',active:true},
-];
-function getSubs(){const s=JSON.parse(localStorage.getItem('ephseed_subscribers')||'[]');const ids=new Set(s.map(x=>x.userId));const m=[...s];DEFAULT_SUBSCRIBERS.forEach(d=>{if(!ids.has(d.userId))m.push(d);});return m;}
-function saveSubs(l){localStorage.setItem('ephseed_subscribers',JSON.stringify(l));}
-function genId(){const ids=new Set(getSubs().map(s=>s.userId));let id;do{id='EP-'+Math.floor(Math.random()*900+100);}while(ids.has(id));return id;}
+function getToken(){return localStorage.getItem('gh_token')||'';}
 const planNames={basic:'실속형',standard:'표준형',premium:'프리미엄'};
 function esc(s){if(!s)return'—';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// GitHub에서 가입자 목록 읽기
+async function getSubs(){
+    try {
+        const res=await fetch(RAW_URL+'?t='+Date.now());
+        if(res.ok){const d=await res.json();localStorage.setItem('ephseed_subs_cache',JSON.stringify(d));return d;}
+    } catch(e){}
+    return JSON.parse(localStorage.getItem('ephseed_subs_cache')||'[]');
+}
+
+// GitHub에 가입자 목록 저장
+async function saveSubs(list){
+    const token=getToken();
+    if(!token){alert('설정 탭에서 GitHub 토큰을 먼저 입력해주세요.');return false;}
+    try {
+        // 현재 파일 SHA 가져오기
+        const meta=await fetch(API_URL,{headers:{Authorization:`token ${token}`}});
+        const mdata=await meta.json();
+        if(!mdata.sha){alert('GitHub 연결 오류: 토큰을 확인해주세요.');return false;}
+        const content=btoa(unescape(encodeURIComponent(JSON.stringify(list,null,2))));
+        const res=await fetch(API_URL,{
+            method:'PUT',
+            headers:{Authorization:`token ${token}`,'Content-Type':'application/json'},
+            body:JSON.stringify({message:`가입자 정보 업데이트`,content,sha:mdata.sha})
+        });
+        if(res.ok){localStorage.setItem('ephseed_subs_cache',JSON.stringify(list));return true;}
+        else{alert('저장 실패. GitHub 토큰 권한을 확인해주세요.');return false;}
+    } catch(e){alert('오류: '+e.message);return false;}
+}
+
+function genId(list){const ids=new Set(list.map(s=>s.userId));let id;do{id='EP-'+Math.floor(Math.random()*900+100);}while(ids.has(id));return id;}
 
 initAdmin();
 
@@ -254,8 +288,10 @@ document.getElementById('gateForm').addEventListener('submit',async e=>{
     btn.textContent='로그인'; btn.disabled=false;
 });
 document.getElementById('logoutBtn').addEventListener('click',()=>{sessionStorage.removeItem('ephseed_admin');document.getElementById('app').style.display='none';document.getElementById('gate').style.display='flex';});
-function showApp(){document.getElementById('gate').style.display='none';document.getElementById('app').style.display='block';loadOverview();loadMemberList();loadSubmissions();loadInquiries();}
+async function showApp(){document.getElementById('gate').style.display='none';document.getElementById('app').style.display='block';initGhTokenField();const l=await getSubs();renderAll(l);}
 if(sessionStorage.getItem('ephseed_admin'))showApp();
+
+function renderAll(l){renderOverview(l);renderMemberList(l);renderSubmissions(l);loadInquiries();}
 
 document.querySelectorAll('.nav-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
@@ -266,8 +302,7 @@ document.querySelectorAll('.nav-btn').forEach(btn=>{
     });
 });
 
-function loadOverview(){
-    const l=getSubs();
+function renderOverview(l){
     document.getElementById('totalCount').textContent=l.length;
     document.getElementById('activeCount').textContent=l.filter(s=>s.active).length;
     document.getElementById('standardCount').textContent=l.filter(s=>s.plan==='standard').length;
@@ -276,13 +311,20 @@ function loadOverview(){
         ?l.map(s=>`<tr><td>${esc(s.userId)}</td><td><strong>${esc(s.loginId)}</strong></td><td>${esc(s.displayName)}</td><td><span class="badge badge-plan">${planNames[s.plan]||esc(s.plan)}</span></td><td><span class="badge ${s.active?'badge-active':'badge-inactive'}">${s.active?'활성':'비활성'}</span></td></tr>`).join('')
         :'<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--muted)">가입자 없음</td></tr>';
 }
-function loadMemberList(){
-    const l=getSubs();
+function renderMemberList(l){
     document.getElementById('memberList').innerHTML=l.length
         ?l.map((s,i)=>`<tr><td>${esc(s.userId)}</td><td><strong>${esc(s.loginId)}</strong></td><td>${esc(s.displayName)}</td><td>${esc(s.storeName)||'—'}</td><td><span class="badge badge-plan">${planNames[s.plan]||esc(s.plan)}</span></td><td>${new Date(s.createdAt).toLocaleDateString('ko-KR')}</td><td><span class="badge ${s.active?'badge-active':'badge-inactive'}">${s.active?'활성':'비활성'}</span></td><td><button class="btn-sm ${s.active?'deact':'act'}" onclick="toggleMember(${i})">${s.active?'비활성화':'활성화'}</button></td></tr>`).join('')
         :'<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--muted)">등록된 가입자 없음</td></tr>';
 }
-function toggleMember(i){const l=getSubs();l[i].active=!l[i].active;saveSubs(l);loadMemberList();loadOverview();}
+async function toggleMember(i){
+    const l=await getSubs(); l[i].active=!l[i].active;
+    const ok=await saveSubs(l);
+    if(ok){renderMemberList(l);renderOverview(l);}
+}
+// 새로고침 버튼
+async function loadOverview(){const l=await getSubs();renderAll(l);}
+async function loadMemberList(){const l=await getSubs();renderMemberList(l);}
+async function loadSubmissions(){const l=await getSubs();renderSubmissions(l);}
 
 document.getElementById('createForm').addEventListener('submit',async e=>{
     e.preventDefault();
@@ -290,19 +332,21 @@ document.getElementById('createForm').addEventListener('submit',async e=>{
     const storeName=document.getElementById('nStoreName').value.trim(), storeType=document.getElementById('nStoreType').value, plan=document.getElementById('nPlan').value;
     const errEl=document.getElementById('createErr'), okEl=document.getElementById('createOk');
     errEl.classList.remove('show'); okEl.classList.remove('show');
-    const l=getSubs();
+    const l=await getSubs();
     if(l.some(s=>s.loginId===loginId)){errEl.textContent='이미 사용 중인 아이디입니다.';errEl.classList.add('show');return;}
     const hash=await sha256(pw);
-    const m={userId:genId(),loginId,displayName:name,passwordHash:hash,storeName,storeType,plan,createdAt:new Date().toISOString(),active:true};
-    l.unshift(m); saveSubs(l);
-    okEl.textContent=`등록 완료 — ID: ${m.userId} / 아이디: ${loginId} / 초기 비밀번호: ${pw}`;
-    okEl.classList.add('show');
-    document.getElementById('createForm').reset();
-    loadMemberList(); loadOverview();
+    const m={userId:genId(l),loginId,displayName:name,passwordHash:hash,storeName,storeType,plan,createdAt:new Date().toISOString(),active:true};
+    l.unshift(m);
+    const ok=await saveSubs(l);
+    if(ok){
+        okEl.textContent=`등록 완료 — ID: ${m.userId} / 아이디: ${loginId} / 초기 비밀번호: ${pw}`;
+        okEl.classList.add('show');
+        document.getElementById('createForm').reset();
+        renderMemberList(l); renderOverview(l);
+    }
 });
 
-function loadSubmissions(){
-    const l=getSubs();
+function renderSubmissions(l){
     document.getElementById('submissionList').innerHTML=l.map(s=>{
         const svc=JSON.parse(localStorage.getItem('ephseed_service_'+s.loginId)||'{}');
         const feats=[];
@@ -322,6 +366,16 @@ function loadInquiries(){
         ?l.map(i=>`<tr><td>${new Date(i.timestamp).toLocaleString('ko-KR')}</td><td>${esc(i.name)}</td><td>${esc(i.phone)}</td><td>${esc(i.storeType)}</td><td><span class="badge badge-plan">${pm[i.plan]||esc(i.plan)}</span></td><td>${esc(i.message)||'—'}</td></tr>`).join('')
         :'<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted)">접수된 내역 없음</td></tr>';
 }
+
+function saveGhToken(){
+    const t=document.getElementById('ghToken').value.trim();
+    if(!t){document.getElementById('ghErr').textContent='토큰을 입력해주세요.';document.getElementById('ghErr').classList.add('show');return;}
+    localStorage.setItem('gh_token',t);
+    document.getElementById('ghOk').textContent='저장되었습니다. 이제 가입자 생성 시 메인 사이트에 자동 반영됩니다.';
+    document.getElementById('ghOk').classList.add('show');
+    document.getElementById('ghErr').classList.remove('show');
+}
+function initGhTokenField(){const t=getToken();if(t&&document.getElementById('ghToken'))document.getElementById('ghToken').value=t;}
 
 document.getElementById('pwForm').addEventListener('submit',async e=>{
     e.preventDefault();
